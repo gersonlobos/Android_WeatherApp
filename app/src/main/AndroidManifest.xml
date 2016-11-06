@@ -33,6 +33,9 @@
         </activity>
 
 
+        <provider
+            android:authorities="com.lobos_google.weatherapp"
+            android:name=".data.WeatherProvider"/>
 
     </application>
 
