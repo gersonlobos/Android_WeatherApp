@@ -49,6 +49,14 @@ import java.util.List;
 
 public class ForecastFragment extends Fragment implements LoaderManager.LoaderCallbacks<Cursor>  {
 
+    private ForecastAdapter mForecastAdapter;
+    private ListView mListView;
+    private int mPosition = ListView.INVALID_POSITION;
+    private boolean mUseTodayLayout;
+
+
+    private static final String SELECTED_KEY = "selected_position";
+
     private static final int FORECAST_LOADER = 0;
     // For the forecast view we're showing only a small subset of the stored data.
     // Specify the columns we need.
@@ -84,8 +92,17 @@ public class ForecastFragment extends Fragment implements LoaderManager.LoaderCa
 
 
 
-
-    private ForecastAdapter mForecastAdapter;
+    /**
+     * A callback interface that all activities containing this fragment must
+     * implement. This mechanism allows activities to be notified of item
+     * selections.
+     */
+    public interface Callback {
+        /**
+         * DetailFragmentCallback for when an item has been selected.
+         */
+        public void onItemSelected(Uri dateUri);
+    }
 
     public ForecastFragment(){
     }
@@ -119,7 +136,8 @@ public class ForecastFragment extends Fragment implements LoaderManager.LoaderCa
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState){
 
-        // The CursorAdapter will take data from our cursor and populate the ListView.
+        // The ForecastAdapter will take data from a source and
+        // use it to populate the ListView it's attached to.
         mForecastAdapter = new ForecastAdapter(getActivity(), null, 0);
 
 
@@ -127,12 +145,13 @@ public class ForecastFragment extends Fragment implements LoaderManager.LoaderCa
 
         View rootView = inflater.inflate(R.layout.fragment_main, container, false);
 
-        ListView listView = (ListView) rootView.findViewById(R.id.listview_forecast);
-        listView.setAdapter(mForecastAdapter);
+        // Get a reference to the ListView, and attach this adapter to it.
+        mListView = (ListView) rootView.findViewById(R.id.listview_forecast);
+        mListView.setAdapter(mForecastAdapter);
 
 
         // We'll call our MainActivity
-        listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+        mListView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
 
             @Override
             public void onItemClick(AdapterView<?> adapterView, View view, int position, long l) {
@@ -141,16 +160,29 @@ public class ForecastFragment extends Fragment implements LoaderManager.LoaderCa
                 Cursor cursor = (Cursor) adapterView.getItemAtPosition(position);
                 if (cursor != null) {
                     String locationSetting = Utility.getPreferredLocation(getActivity());
-                    Intent intent = new Intent(getActivity(), DetailActivity.class)
-                            .setData(WeatherContract.WeatherEntry.buildWeatherLocationWithDate(
+
+                    ((Callback) getActivity())
+                            .onItemSelected(WeatherContract.WeatherEntry.buildWeatherLocationWithDate(
                                     locationSetting, cursor.getLong(COL_WEATHER_DATE)
                             ));
-                    startActivity(intent);
+
                 }
+                mPosition = position;
             }
         });
 
+        // If there's instance state, mine it for useful information.
+        // The end-goal here is that the user never knows that turning their device sideways
+        // does crazy lifecycle related things.  It should feel like some stuff stretched out,
+        // or magically appeared to take advantage of room, but data or place in the app was never
+        // actually *lost*.
+        if (savedInstanceState != null && savedInstanceState.containsKey(SELECTED_KEY)) {
+            // The listview probably hasn't even been populated yet.  Actually perform the
+            // swapout in onLoadFinished.
+            mPosition = savedInstanceState.getInt(SELECTED_KEY);
+        }
 
+        mForecastAdapter.setUseTodayLayout(mUseTodayLayout);
 
         return rootView;
     }// End OnCreateView
@@ -174,13 +206,33 @@ public class ForecastFragment extends Fragment implements LoaderManager.LoaderCa
         weatherTask.execute(location);
     }
 
+    @Override
+    public void onSaveInstanceState(Bundle outState) {
+        // When tablets rotate, the currently selected list item needs to be saved.
+        // When no item is selected, mPosition will be set to Listview.INVALID_POSITION,
+        // so check for that before storing.
+        if (mPosition != ListView.INVALID_POSITION) {
+            outState.putInt(SELECTED_KEY, mPosition);
+        }
+        super.onSaveInstanceState(outState);
+    }
+
+
 
     @Override
     public Loader<Cursor> onCreateLoader(int i, Bundle bundle) {
-        String locationSetting = Utility.getPreferredLocation(getActivity());
+
+        // This is called when a new Loader needs to be created.  This
+        // fragment only uses one loader, so we don't care about checking the id.
+
+        // To only show current and future dates, filter the query to return weather only for
+        // dates after or including today.
 
         // Sort order:  Ascending, by date.
         String sortOrder = WeatherContract.WeatherEntry.COLUMN_DATE + " ASC";
+
+        String locationSetting = Utility.getPreferredLocation(getActivity());
+
         Uri weatherForLocationUri = WeatherContract.WeatherEntry.buildWeatherLocationWithStartDate(
                 locationSetting, System.currentTimeMillis());
 
@@ -193,254 +245,29 @@ public class ForecastFragment extends Fragment implements LoaderManager.LoaderCa
     }
 
     @Override
-    public void onLoadFinished(Loader<Cursor> cursorLoader, Cursor cursor) {
-        mForecastAdapter.swapCursor(cursor);
-            }
+    public void onLoadFinished(Loader<Cursor> loader, Cursor data) {
+        mForecastAdapter.swapCursor(data);
+
+        if (mPosition != ListView.INVALID_POSITION) {
+            // If we don't need to restart the loader, and there's a desired position to restore
+            // to, do so now.
+            mListView.smoothScrollToPosition(mPosition);
+        }
+    }
 
     @Override
-    public void onLoaderReset(Loader<Cursor> cursorLoader) {
+    public void onLoaderReset(Loader<Cursor> loader) {
+
         mForecastAdapter.swapCursor(null);
     }
 
-//    //===================================================
-//
-//    public class FetchWeatherTask extends AsyncTask<String, Void,String[]>{//<params, progress,result>
-//
-//        private final String LOG_TAG= FetchWeatherTask.class.getSimpleName();
-//
-//
-//        private String getReadableDateString(long time){
-//            // Because the API returns a unix timestamp (measured in seconds),
-//            // it must be converted to milliseconds in order to be converted to valid date.
-//            SimpleDateFormat shortenedDateFormat = new SimpleDateFormat("EEE MMM dd");
-//            return shortenedDateFormat.format(time);
-//        }
-//
-//        private String formatHighLows(double high,double low,String unitType){
-//
-//            if (unitType.equals(getString(R.string.pref_units_imperial))){
-//                high = (high * 1.8) + 32;
-//                low = (low * 1.8) + 32;
-//            }else if(!unitType.equals(getString(R.string.pref_units_imperial))){
-//                Log.d(LOG_TAG,"Unit type not fount "+unitType);
-//            }
-//
-//            long roundedHigh = Math.round(high);
-//            long roundedLow = Math.round(low);
-//
-//            String highLowStr = roundedHigh + "/" + roundedLow;
-//            return highLowStr;
-//        }
-//
-//
-//
-//
-//        private String[] getWeatherDataFromJson(String forecastJsonStr, int numDays)
-//                throws JSONException {
-//
-//            //these are the names of the Json object that need to be extracted
-//            final String OWN_LIST = "list";
-//            final String OWN_WEATHER = "weather";
-//            final String OWN_TEMPERATURE = "temp";
-//            final String OWN_MAX = "max";
-//            final String OWN_MIN = "min";
-//            final String OWN_DESCRIPTION = "main";
-//
-//            JSONObject forecastJson = new JSONObject(forecastJsonStr);
-//            JSONArray weatherArray = forecastJson.getJSONArray(OWN_LIST);
-//
-//            //Log.v(LOG_TAG," weatherArray-->"+weatherArray.toString());
-//            Time dayTime = new Time();
-//            dayTime.setToNow();
-//
-//            // we start at the day returned by local time. Otherwise this is a mess.
-//            int julianStartDay = Time.getJulianDay(System.currentTimeMillis(), dayTime.gmtoff);
-//
-//            // now we work exclusively in UTC
-//            dayTime = new Time();
-//
-//            String[] resultStrs = new String[numDays];
-//            // Data is fetched in Celsius by default.
-//            // If user prefers to see in Fahrenheit, convert the values here.
-//            // We do this rather than fetching in Fahrenheit so that the user can
-//            // change this option without us having to re-fetch the data once
-//            // we start storing the values in a database.
-//
-//            SharedPreferences sharedPrefs =
-//                    PreferenceManager.getDefaultSharedPreferences(getActivity());
-//
-//            String unitType = sharedPrefs.getString(
-//                    getString(R.string.pref_units_key),
-//                    getString(R.string.pref_units_metric)
-//            );
-//
-//            for(int i=0;i<weatherArray.length(); i++){
-//
-//                String day;
-//                String description;
-//                String highAndLow;
-//
-//                //Ger the Json object representing the day
-//                JSONObject dayForecast = weatherArray.getJSONObject(i);
-//               // Log.v(LOG_TAG,"dayForecast: ("+1+") "+dayForecast.toString());
-//
-//                // The date/time is returned as a long.  We need to convert that
-//                // into something human-readable, since most people won't read "1400356800" as
-//                // "this saturday".
-//
-//                long dateTime;
-//                // Cheating to convert this to UTC time, which is what we want anyhow
-//                dateTime = dayTime.setJulianDay(julianStartDay+i);
-//                day = getReadableDateString(dateTime);
-//
-//
-//                // description is in a child array called "weather", which is 1 element long.
-//                JSONObject weatherObject = dayForecast.getJSONArray(OWN_WEATHER).getJSONObject(0);
-//
-//              //  Log.v(LOG_TAG,"weatherObject OWN_WEATHER: "+weatherObject.toString());
-//
-//
-//                description = weatherObject.getString(OWN_DESCRIPTION);
-//                //description = weatherObject.opt(OWN_DESCRIPTION).toString();
-//              //  Log.v(LOG_TAG,"description: "+description);
-//
-//
-//                // Temperatures are in a child object called "temp".  Try not to name variables
-//                // "temp" when working with temperature.  It confuses everybody.
-//
-//                JSONObject temperatureObject = dayForecast.getJSONObject(OWN_TEMPERATURE);
-//                double high = temperatureObject.getDouble(OWN_MAX);
-//                double low  = temperatureObject.getDouble(OWN_MIN);
-//
-//                highAndLow = formatHighLows(high,low,unitType);
-//                resultStrs[i]= day + " - " +description + " - " + highAndLow;
-//            }//end for
-//
-//            for(String s: resultStrs){
-//                Log.v(LOG_TAG,"Forecast entry: " + s);
-//            }
-//
-//          return resultStrs;
-//        }
-//
-//
-//
-//
-//
-//        @Override
-//        protected String[] doInBackground(String... params){
-//
-//
-//            if(params.length == 0){
-//                return null;
-//            }
-//
-//            HttpURLConnection urlConnection = null;
-//            BufferedReader reader = null;
-//
-//            String forecastJsonStr =null;
-//            String format = "json";
-//            String units = "metric";
-//            int numDays=7;
-//
-//            try{
-//               // String baseUrl="http://api.openweathermap.org/data/2.5/forecast/daily?q=10566&mode=json&units=metric&cnt=7";
-//                //String apiKey= "&APPID="+ BuildConfig.MyOpenWeatherMapApiKey;
-//
-//                final String FORECAST_BASE_URL="http://api.openweathermap.org/data/2.5/forecast/daily?";
-//                final String QUERY_PARAM= "q";
-//                final String FORMAT_PARAM="mode";
-//                final String UNITS_PARAM="units";
-//                final String DAYS_PARAM="cnt";
-//                final String APPID_PARAM="APPID";
-//
-//                Uri builtUri = Uri.parse(FORECAST_BASE_URL).buildUpon()
-//                        .appendQueryParameter(QUERY_PARAM,params[0])//string passed
-//                        .appendQueryParameter(FORMAT_PARAM,format)
-//                        .appendQueryParameter(UNITS_PARAM,units)
-//                        .appendQueryParameter(DAYS_PARAM,Integer.toString(numDays))
-//                        .appendQueryParameter(APPID_PARAM,BuildConfig.MyOpenWeatherMapApiKey)
-//                        .build();
-//
-//
-//
-//
-//                URL url = new URL(builtUri.toString());
-//
-//             //   Log.v(LOG_TAG,"Built URI --->"+ builtUri.toString());
-//
-//
-//                urlConnection = (HttpURLConnection) url.openConnection();
-//                urlConnection.setRequestMethod("GET");
-//                urlConnection.connect();
-//
-//                InputStream inputStream= urlConnection.getInputStream();
-//                StringBuffer buffer = new StringBuffer();
-//                if(inputStream == null){
-//                    //nothing to do
-//                    return null;
-//                }
-//                reader = new BufferedReader(new InputStreamReader(inputStream));
-//
-//                String line;
-//                while((line = reader.readLine())!=null){//read until end of line
-//
-//                        buffer.append(line +"\n");
-//                }// end while
-//
-//                if (buffer.length() ==0){
-//                    return null;
-//                }
-//
-//                forecastJsonStr = buffer.toString();
-//               // Log.v(LOG_TAG,"Forecast JSON String: "+forecastJsonStr);
-//
-//                //-------------------------------
-//            }catch(IOException e){// IOException resolves all the errors asking for try and catch
-//
-//                Log.e(LOG_TAG,"Error",e);
-//                return null;
-//            }finally {
-//
-//                if (urlConnection!=null){
-//                    urlConnection.disconnect();
-//                }
-//                if(reader!=null){
-//                    try{
-//                       reader.close();
-//                    }catch(final IOException e){
-//                        Log.e(LOG_TAG,"Error closing stream",e);
-//                    }
-//                }//end if if(reader!=null)
-//            }//end finally
-//
-//
-//            try{//this is done due that the functions trows exception
-//                return getWeatherDataFromJson(forecastJsonStr,numDays);
-//            }catch(JSONException e){
-//                Log.e(LOG_TAG,e.getMessage(),e);
-//                e.printStackTrace();
-//            }
-//
-//        // This will only happen if there was an error getting or parsing the forecast.
-//        return null;
-//        }// end doInBackground
-//
-//
-//        @Override
-//        protected void onPostExecute(String[] result) {//this gets triggered after do in background
-//            //super.onPostExecute(strings);
-//            if (result != null){
-//
-//                mForecastAdapter.clear();
-//                for (String dayForecastStr : result){
-//                    mForecastAdapter.add(dayForecastStr);
-//                }
-//            }
-//
-//        }
-//
-//    }// End FetchWeatherTask
+
+    public void setUseTodayLayout(boolean useTodayLayout) {
+        mUseTodayLayout = useTodayLayout;
+        if (mForecastAdapter != null) {
+            mForecastAdapter.setUseTodayLayout(mUseTodayLayout);
+        }
+    }
 
 
 }// end ForecastFragment
