@@ -1,5 +1,8 @@
 package com.lobos_google.weatherapp;
 
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
@@ -40,6 +43,9 @@ import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import com.lobos_google.weatherapp.data.WeatherContract;
+import com.lobos_google.weatherapp.service.SunshineService;
+import com.lobos_google.weatherapp.sync.SunshineSyncAdapter;
+
 import java.util.Arrays;
 import java.util.List;
 
@@ -201,10 +207,10 @@ public class ForecastFragment extends Fragment implements LoaderManager.LoaderCa
     }
 
     private void updateWeather(){
-        FetchWeatherTask weatherTask = new FetchWeatherTask(getActivity());
-        String location = Utility.getPreferredLocation(getActivity());
-        weatherTask.execute(location);
-    }
+        //String location = Utility.getPreferredLocation(getActivity());
+        //new FetchWeatherTask(getActivity()).execute(location);
+        SunshineSyncAdapter.syncImmediately(getActivity());
+    }// end updateWeather
 
     @Override
     public void onSaveInstanceState(Bundle outState) {
